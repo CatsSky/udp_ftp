@@ -1,11 +1,14 @@
+#!/sbin/python
+
 import socket
 import queue
 
 # queue module provides thread-safe queue implementation
-data_queue = queue()
+data_queue = queue.Queue()
 
 
 def main():
+    # defines an datagram socket aka UDP socket
     sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     sock.bind(("", 28888)) # all interfaces
     buffer_size = 1024
