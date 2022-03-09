@@ -15,3 +15,4 @@
 - [ ] download / upload checksum
 - [ ] multiprocess for server
 - [ ] multithread file transfer
+- [ ] multi-user support for server

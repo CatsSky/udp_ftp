@@ -14,13 +14,13 @@ class Server:
         self.sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         self.sock.bind(("", 28888)) # all interfaces
         self.buffer_size = 1024
-        self.connection: str = None
+        self.connection: str = ""
         self.pwd: Path = Path('.')
 
     def __del__(self):
         self.close()
 
-    def send(self, cip: tuple, data: bytearray):
+    def send(self, cip: str, data: bytes):
         addr = cip, 28889
         self.sock.sendto(data, addr)
 
@@ -36,10 +36,6 @@ class Server:
                 self.connection = addr[0]
                 print(f'Connection established with {addr}')
                 return
-
-    def close(self):
-        self.sock.close()
-        
 
     def start(self):
         while True:
@@ -85,6 +81,9 @@ class Server:
                     else:
                         print(f'{file_path} does not exist')
                         break
+
+    def close(self):
+        self.sock.close()
                     
             
     

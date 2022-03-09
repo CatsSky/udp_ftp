@@ -16,7 +16,10 @@ class Client:
         self.buffer_size = 1024
         self.connection: str = sip
 
-    def send(self, sip: tuple, data: bytearray):
+    def __del__(self):
+        self.close()
+
+    def send(self, sip: str, data: bytes):
         addr = sip, 28888
         self.sock.sendto(data, addr)
 
@@ -47,9 +50,8 @@ class Client:
         data = self.waitForResponse()
         return data
 
-    def close(self):
-        self.disconnect()
-        self.sock.close()
+    def put(self, data: bytearray):
+        self.send(self.connection, b'PUT\x00' + data)
 
     def connect(self):
         self.send(self.connection, b'CONNECT')
@@ -57,7 +59,8 @@ class Client:
     def disconnect(self):
         self.send(self.connection, b'EXIT')
 
-    def __del__(self):
-        self.close()
+    def close(self):
+        self.disconnect()
+        self.sock.close()
 
 
