@@ -1,11 +1,8 @@
 #!/sbin/python
 
 from pathlib import Path
-from multiprocessing.connection import wait
 import socket
 import queue
-
-from matplotlib.pyplot import waitforbuttonpress
 
 # queue module provides thread-safe queue implementation
 data_queue = queue.Queue()
@@ -53,6 +50,7 @@ class Server:
                 if cip != self.connection:
                     print(f'{cip} is not connected to this server')
                     continue
+                
                 if data == b'EXIT':
                     print(f'Session with {cip} closed')
                     break
@@ -69,12 +67,23 @@ class Server:
                     self.send(self.connection, data)
 
                 elif data[0] == b'CD':
-                    path: str = data[1].decode().split('/')
+                    path: str = data[1].decode()
                     new_path = (self.pwd / path).resolve()
                     if new_path.is_dir():
                         self.pwd = new_path
                     else:
                         print(f'{new_path} is not a directory')
+                        break
+                
+                elif data[0] == b'GET':
+                    path: str = data[1].decode()
+                    file_path = (self.pwd / path).resolve()
+                    if file_path.is_file():
+                        print(f'Sending {file_path}')
+                        data = file_path.read_bytes()
+                        self.send(self.connection, data)
+                    else:
+                        print(f'{file_path} does not exist')
                         break
                     
             
@@ -86,5 +95,5 @@ def main():
     server.start()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

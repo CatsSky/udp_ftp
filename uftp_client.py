@@ -1,8 +1,8 @@
 #!/sbin/python
 
-from re import T
 import socket
 import queue
+from pathlib import Path
 
 # queue module provides thread-safe queue implementation
 data_queue = queue.Queue()
@@ -42,6 +42,11 @@ class Client:
     def cd(self, path: str):
         self.send(self.connection, b'CD\x00' + path.encode())
 
+    def get(self, path: str):
+        self.send(self.connection, b'GET\x00' + path.encode())
+        data = self.waitForResponse()
+        return data
+
     def close(self):
         self.disconnect()
         self.sock.close()
@@ -56,15 +61,3 @@ class Client:
         self.close()
 
 
-def main():
-    client = Client("127.0.0.1")
-    client.connect()
-    pwd = client.pwd()
-    print(pwd)
-    ls = client.ls()
-    print(ls)
-    client.cd("../..")
-    print(client.ls())
-
-if __name__ == "__main__":
-    main()

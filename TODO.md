@@ -10,4 +10,8 @@
   - port
   - buffersize
   - timeout
-- [] file transfer with chunk division
+- [ ] file transfer with chunk division
+- [ ] packet CRC
+- [ ] download / upload checksum
+- [ ] multiprocess for server
+- [ ] multithread file transfer
