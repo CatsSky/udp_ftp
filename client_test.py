@@ -1,3 +1,5 @@
+#!/sbin/python
+
 from pathlib import Path
 from uftp_client import Client
 
