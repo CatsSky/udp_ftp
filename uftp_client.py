@@ -3,6 +3,7 @@
 import socket
 import queue
 from pathlib import Path
+import hashlib
 
 # queue module provides thread-safe queue implementation
 data_queue = queue.Queue()
@@ -50,8 +51,9 @@ class Client:
         data = self.waitForResponse()
         return data
 
-    def put(self, data: bytearray):
-        self.send(self.connection, b'PUT\x00' + data)
+    def put(self, filename: str):
+        fingerprint = hashlib.sha256(Path(filename).read_bytes()).hexdigest().encode()
+        self.send(self.connection, b'PUT\x00' + filename.encode() + b'\x00' + fingerprint)
 
     def connect(self):
         self.send(self.connection, b'CONNECT')
