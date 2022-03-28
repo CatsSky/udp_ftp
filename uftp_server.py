@@ -6,6 +6,7 @@ import queue
 import hashlib
 import math
 import threading
+import multiprocessing
 import time
 
 
@@ -28,8 +29,8 @@ class Server:
         # queue module provides thread-safe queue implementation
         self.data_queue = queue.Queue()
 
-        self.listener_thread = threading.Thread(target=self.listener_task)
-        self.listener_thread.start()
+        self.listener_process = multiprocessing.Process(target=self.listener_task)
+        self.listener_process.start()
 
 
     def __del__(self):
@@ -44,9 +45,13 @@ class Server:
         self.send(self.connection, file)
 
     def listener_task(self):
-        while True:
-            data, addr = self.sock.recvfrom(self.buffer_size)
-            self.data_queue.put((data, addr))
+        try:
+            while True:
+                data, addr = self.sock.recvfrom(self.buffer_size)
+                self.data_queue.put((data, addr))
+        except Exception as e:
+            print(e)
+            print('Listener thread terminated')
 
     def receive(self):
         data, addr = self.data_queue.get()
@@ -134,7 +139,6 @@ class Server:
         # response = b'OK' + b'\x00' + digest.encode()
         # self.send(self.connection, response)
 
-        # while True:
 
     def start(self):
         while True:
@@ -162,13 +166,15 @@ class Server:
     def close(self):
         print('Closing server')
         self.sock.close()
-        print('Waiting for listener thread to exit...')
-        self.listener_thread.join(timeout=0)
+        self.listener_process.terminate()
 
 
 def main():
     server = Server()
-    server.start()
+    try:
+        server.start()
+    except KeyboardInterrupt:
+        server.close()
 
 
 if __name__ == '__main__':
