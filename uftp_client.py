@@ -4,18 +4,28 @@ import socket
 import queue
 from pathlib import Path
 import hashlib
+import math
+import time
+import threading
 
-# queue module provides thread-safe queue implementation
-data_queue = queue.Queue()
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
 
 class Client:
 
     def __init__(self, sip: str):
         self.sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         self.sock.bind(("", 28889)) # all interfaces
-        self.buffer_size = 1024
+        self.buffer_size = 508
+        self.reserve_size = 80
+        self.message_sze = self.buffer_size - self.reserve_size
         self.connection: str = sip
+
+        # queue module provides thread-safe queue implementation
+        self.data_queue = queue.Queue()
 
     def __del__(self):
         self.close()
@@ -23,6 +33,19 @@ class Client:
     def send(self, sip: str, data: bytes):
         addr = sip, 28888
         self.sock.sendto(data, addr)
+
+    def sendFile(self, file: bytes):
+        digest = hashlib.sha256(file).hexdigest().encode()
+        messages = [*chunks(file, self.message_sze)]
+        for idx, chunk in enumerate(messages):
+            data = digest + idx.to_bytes(4, 'big') + len(chunk).to_bytes(4, 'big') + chunk
+            self.send(self.connection, data)
+            time.sleep(1e-9) # weird workaround for buffer overflow
+            
+        res = self.waitForResponse()
+        if res == b'OK':
+            print('File sent successfully')
+
 
     def receive(self):
         data, addr = self.sock.recvfrom(self.buffer_size)
@@ -51,9 +74,16 @@ class Client:
         data = self.waitForResponse()
         return data
 
-    def put(self, filename: str):
-        fingerprint = hashlib.sha256(Path(filename).read_bytes()).hexdigest().encode()
-        self.send(self.connection, b'PUT\x00' + filename.encode() + b'\x00' + fingerprint)
+    def put(self, filepath: str):
+        file = Path(filepath).read_bytes()
+        digest = hashlib.sha256(file).hexdigest().encode()
+        filename = Path(filepath).name
+        print(f'File: {filename} | Digest: {digest} | File Size: {len(file)}')
+        data = b'PUT\x00' + filename.encode() + b'\x00' + digest + b'\x00' + str(len(file)).encode()
+        self.send(self.connection, data)
+        
+        self.sendFile(file)
+        
 
     def connect(self):
         self.send(self.connection, b'CONNECT')

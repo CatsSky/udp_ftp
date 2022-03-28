@@ -4,19 +4,33 @@ from pathlib import Path
 import socket
 import queue
 import hashlib
+import math
+import threading
+import time
 
-# queue module provides thread-safe queue implementation
-data_queue = queue.Queue()
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
 
 class Server:
 
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", 28888))  # all interfaces
-        self.buffer_size = 1024
+        self.buffer_size = 508
+        self.reserve_size = 80
+        self.message_sze = self.buffer_size - self.reserve_size
         self.connection: str = ""
         self.session_pwd: Path = Path('.')
+
+        # queue module provides thread-safe queue implementation
+        self.data_queue = queue.Queue()
+
+        self.listener_thread = threading.Thread(target=self.listener_task)
+        self.listener_thread.start()
+
 
     def __del__(self):
         self.close()
@@ -25,10 +39,51 @@ class Server:
         addr = cip, 28889
         self.sock.sendto(data, addr)
 
+    def sendFile(self, file_path: Path):
+        file = file_path.read_bytes()
+        self.send(self.connection, file)
+
+    def listener_task(self):
+        while True:
+            data, addr = self.sock.recvfrom(self.buffer_size)
+            self.data_queue.put((data, addr))
+
     def receive(self):
-        data, addr = self.sock.recvfrom(self.buffer_size)
-        print(f'Received Message from {addr}:\n{data}')
+        data, addr = self.data_queue.get()
+        # print(f'Received Message from {addr}:\n{data}')
         return data, addr
+
+    def receiveFile(self, digest: str, file_size: int):
+        chunkNum = math.ceil(file_size / self.message_sze)
+        chunks = dict()
+        
+        while len(chunks) != chunkNum:
+            data = self.listenFrom(self.connection)
+            recvDigest = data[:64].decode()
+            if recvDigest != digest:
+                continue
+            idx = int.from_bytes(data[64:68], 'big')
+            size = int.from_bytes(data[68:72], 'big')
+            chunk = data[72:]
+            chunks[idx] = chunk
+
+            print(f'Received chunk {idx}')
+            print(f'Total {len(chunks)} out of {chunkNum} chunks')
+            print(f'Chunk size: {size}')
+
+        self.send(self.connection, b'OK')
+        file = b''.join(chunks.values())
+
+        return file
+        
+        
+        
+    def listenFrom(self, ip: str):
+        while True:
+            data, (cip, cport) = self.receive()
+            if cip != self.connection:
+                continue
+            return data
 
     def waitForConnection(self):
         while True:
@@ -68,12 +123,18 @@ class Server:
 
     def put(self, data: list[bytes]):
         filename = data[1].decode()
-        fingerprint = data[2].decode()
+        digest = data[2].decode()
+        file_size = int(data[3].decode())
         file_path = (self.session_pwd / filename).resolve()
         print(f'Receiving {file_path}')
-        data_queue.put(file_path)
-        response = b'OK' + b'\x00' + fingerprint.encode()
-        self.send(self.connection, response)
+        print(f'Digest: {digest} | File size: {file_size}')
+
+        file = self.receiveFile(digest, file_size)
+        file_path.write_bytes(file)
+        # response = b'OK' + b'\x00' + digest.encode()
+        # self.send(self.connection, response)
+
+        # while True:
 
     def start(self):
         while True:
@@ -99,7 +160,10 @@ class Server:
                     continue
 
     def close(self):
+        print('Closing server')
         self.sock.close()
+        print('Waiting for listener thread to exit...')
+        self.listener_thread.join(timeout=0)
 
 
 def main():

@@ -8,12 +8,11 @@ def main():
     client = Client('127.0.0.1')
     client.connect()
     client.pwd()
-    client.cd('../..')
-    client.cd('network_programming/udp_ftp')
+    client.cd('test')
     client.pwd()
 
-    data = client.get('TODO.md')
-    Path('get_TODO.md').write_bytes(data)
+    data = client.put('../../../../Downloads/t14s_gen2_x13_gen2_hmm_en.pdf')
+    # data = client.put('uftp_client.py')
     
     
 
