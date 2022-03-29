@@ -7,10 +7,9 @@ import hashlib
 import math
 import time
 import threading
-
+from StoppableThread import StoppableThread
 
 def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
@@ -19,7 +18,7 @@ class Client:
     def __init__(self, sip: str):
         self.sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         self.sock.bind(("", 28889)) # all interfaces
-        self.buffer_size = 508
+        self.buffer_size = 2048
         self.reserve_size = 80
         self.message_sze = self.buffer_size - self.reserve_size
         self.connection: str = sip
@@ -34,17 +33,53 @@ class Client:
         addr = sip, 28888
         self.sock.sendto(data, addr)
 
+    def sendStartFrom(self, messages: list[bytes], digest: bytes, start: int):
+        ct: StoppableThread = threading.currentThread()
+        for idx in range(start, len(messages)):
+            if ct.stopEvent.is_set():
+                return
+
+            chunk = messages[idx]
+            data = b'FILE\x00' + digest + idx.to_bytes(4, 'big') + len(chunk).to_bytes(4, 'big') + chunk
+            self.send(self.connection, data)
+            time.sleep(0.001) # rate limiting
+            # TODO: flowrate control and congestion control
+
     def sendFile(self, file: bytes):
         digest = hashlib.sha256(file).hexdigest().encode()
         messages = [*chunks(file, self.message_sze)]
-        for idx, chunk in enumerate(messages):
-            data = digest + idx.to_bytes(4, 'big') + len(chunk).to_bytes(4, 'big') + chunk
-            self.send(self.connection, data)
-            time.sleep(1e-9) # weird workaround for buffer overflow
-            
-        res = self.waitForResponse()
-        if res == b'OK':
-            print('File sent successfully')
+
+        send_thread = StoppableThread(target=self.sendStartFrom, args=(messages, digest, 0))
+        send_thread.start()
+
+        last_resend_idx = 0
+        last_resend_time = 0.0
+
+        while True:
+            data = self.waitForResponse()
+            dataList = data.split(b'\x00')
+            if dataList[0] == b'OK':
+                print('File sent successfully')
+                break
+            if dataList[0] == b'RE' and dataList[1] == digest:
+                idx = int.from_bytes(data[69:], byteorder='big')
+                if last_resend_idx == idx and time.monotonic() - last_resend_time < 0.05:
+                    # do not resend if duplicate RE is received and timout has not yet met
+                    print(f'{time.monotonic()}, {last_resend_time}')
+                    continue
+
+                last_resend_idx = idx
+                last_resend_time = time.monotonic()
+
+                print(f'Resend packet stream from {idx}')
+                send_thread.stop()
+                # time.sleep(0.01)
+                send_thread = StoppableThread(target=self.sendStartFrom, args=(messages, digest, idx))
+                send_thread.start()
+                
+        
+
+        print('File sent successfully')
 
 
     def receive(self):
