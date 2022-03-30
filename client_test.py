@@ -11,8 +11,12 @@ def main():
     client.cd('test')
     client.pwd()
 
-    data = client.put('../../../../Downloads/t14s_gen2_x13_gen2_hmm_en.pdf')
+    # data = client.put('../../../../Downloads/t14s_gen2_x13_gen2_hmm_en.pdf')
     # data = client.put('uftp_client.py')
+    client.put('random10m')
+    # data = client.get('random10m')
+
+    client.close()
     
     
 

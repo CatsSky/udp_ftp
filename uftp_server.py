@@ -7,6 +7,7 @@ import hashlib
 import math
 import threading
 import time
+from StoppableThread import StoppableThread
 from typing import Mapping
 
 
@@ -20,7 +21,7 @@ class Server:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", 28888))  # all interfaces
         self.buffer_size = 2048
-        self.reserve_size = 80
+        self.reserve_size = 128
         self.message_sze = self.buffer_size - self.reserve_size
         self.connection: str = ""
         self.session_pwd: Path = Path('.')
@@ -37,16 +38,72 @@ class Server:
 
     def send(self, cip: str, data: bytes):
         addr = cip, 28889
+
+        # Add checksum to data
+        data = data + hashlib.md5(data).digest()
+
         self.sock.sendto(data, addr)
 
-    def sendFile(self, file_path: Path):
-        file = file_path.read_bytes()
-        self.send(self.connection, file)
+    def sendStartFrom(self, messages: list[bytes], digest: bytes, start: int):
+        ct: StoppableThread = threading.current_thread()
+        for idx in range(start, len(messages)):
+            if ct.stopEvent.is_set():
+                return
+
+            chunk = messages[idx]
+            data = b'FILE\x00' + digest + idx.to_bytes(4, 'big') + len(chunk).to_bytes(4, 'big') + chunk
+            self.send(self.connection, data)
+            time.sleep(0.001) # rate limiting
+            # TODO: flowrate control and congestion control
+
+    def sendFile(self, cip: str, file: bytes):
+        digest = hashlib.sha256(file).hexdigest().encode()
+        messages = [*chunks(file, self.message_sze)]
+
+        send_thread = StoppableThread(target=self.sendStartFrom, args=(messages, digest, 0))
+        send_thread.start()
+
+        last_resend_idx = 0
+        last_resend_time = 0.0
+
+        while True:
+            data = self.listenFrom(cip)
+            dataList = data.split(b'\x00')
+            if dataList[0] == b'OK':
+                print('File sent successfully')
+                break
+            if dataList[0] == b'RE' and dataList[1] == digest:
+                idx = int.from_bytes(data[69:], byteorder='big')
+                if last_resend_idx == idx and time.monotonic() - last_resend_time < 0.05:
+                    # do not resend if duplicate RE is received and timout has not yet met
+                    continue
+
+                last_resend_idx = idx
+                last_resend_time = time.monotonic()
+
+                print(f'Resend packet stream from {idx}')
+                send_thread.stop()
+                send_thread.join()
+                send_thread = StoppableThread(target=self.sendStartFrom, args=(messages, digest, idx))
+                send_thread.start()
+                
+        
+
+        print('File sent successfully')
 
     def listener_task(self):
         try:
             while True:
                 data, addr = self.sock.recvfrom(self.buffer_size)
+
+                # checksum validation
+                if hashlib.md5(data[0:-16]).digest() != data[-16:]:
+                    print(f'Invalid checksum for {data}')
+                    print(f'Expected: {hashlib.md5(data[0:-16]).digest()} | Received: {data[-16:]}')
+                    continue
+
+                data = data[0:-16]
+
                 if addr[0] not in self.data_queues:
                     self.data_queues[addr[0]] = queue.Queue()
                 self.data_queues[addr[0]].put(data)
@@ -72,7 +129,7 @@ class Server:
                 continue
             recvDigest = data[5:69]
             if recvDigest != digest:
-                print(f'File integrity check failed')
+                print(f'File packet is not expected')
                 print(f'Expected: {digest} | Received: {recvDigest}')
                 continue
             chunkIdx = int.from_bytes(data[69:73], 'big')
@@ -90,24 +147,10 @@ class Server:
             chunks.append(chunk)
             idx += 1
             
-                
-        
-        # while len(chunks) != chunkNum:
-        #     data = self.listenFrom(self.connection)
-        #     recvDigest = data[5:69].decode()
-        #     if recvDigest != digest:
-        #         continue
-        #     idx = int.from_bytes(data[69:73], 'big')
-        #     size = int.from_bytes(data[73:77], 'big')
-        #     chunk = data[77:]
-        #     chunks[idx] = chunk
-
-            # print(f'Received chunk {idx}')
-            # print(f'Total {len(chunks)} out of {chunkNum} chunks')
-            # print(f'Chunk size: {size}')
 
         self.send(self.connection, b'OK')
         file = b''.join(chunks)
+        print(f'File rceived. Total of {len(chunks)} chunks')
 
         return file
         
@@ -128,6 +171,8 @@ class Server:
                     self.connection = cip
                     print(f'Connection established with {cip}')
                     return
+
+            time.sleep(0.005)
 
     def pwd(self, data: list[bytes]):
         path = self.session_pwd.absolute().as_posix()
@@ -153,7 +198,13 @@ class Server:
         if file_path.is_file():
             print(f'Sending {file_path}')
             file = file_path.read_bytes()
-            self.send(self.connection, file)
+            digest = hashlib.sha256(file).hexdigest().encode()
+            filename = Path(file_path).name
+
+            res = b'GETR\x00' + filename.encode() + b'\x00' + digest + b'\x00' + str(len(file)).encode()
+            self.send(self.connection, res)
+
+            self.sendFile(self.connection, file)
         else:
             print(f'{file_path} does not exist')
 
@@ -168,7 +219,7 @@ class Server:
         file = self.receiveFile(digest, file_size)
 
         # File integraty check
-        if hashlib.sha256(file).hexdigest() != digest:
+        if hashlib.sha256(file).hexdigest() != digest.decode():
             print(f'File {filename} integrity check failed')
             response = b'FAIL\x00' + digest
             self.send(self.connection, response)
@@ -189,8 +240,11 @@ class Server:
                 if data == b'EXIT':
                     print(f'Session with {self.connection} closed')
                     break
-
+                
                 data = data.split(b'\x00')
+                
+                if data[0] == b'FILE':
+                    continue
 
                 try:
                     getattr(self, data[0].decode().lower())(data)
@@ -198,6 +252,8 @@ class Server:
                     print(e)
                     print('Invalid command')
                     continue
+
+                time.sleep(0.005)
 
     def close(self):
         print('Closing server')
